@@ -117,40 +117,120 @@ class CarouselAnimator {
     constructor() {
         this.track = document.getElementById('carouselTrack');
         this.carousel = document.querySelector('.reviews-carousel');
-        this.isHovering = false;
+        this.isPointerDown = false;
+        this.isDragging = false;
+        this.startX = 0;
+        this.startScroll = 0;
+        this.autoSpeed = 0.04; // pixels per ms
+        this.lastTime = null;
+        this.pauseWhileInteracting = true;
+        this.resumeTimeout = null;
     }
 
     init() {
         if (!this.track) return;
 
-        // Clone all items for infinite scroll
+        // Clone items once to allow seamless looping
         this.cloneItems();
-        
-        // Add hover pause functionality
-        this.carousel.addEventListener('mouseenter', () => {
-            this.track.style.animationPlayState = 'paused';
-        });
 
-        this.carousel.addEventListener('mouseleave', () => {
-            this.track.style.animationPlayState = 'running';
-        });
+        // Setup dimensions used for looping
+        this.singleTrackWidth = this.track.scrollWidth / 2;
 
-        // Handle touch for mobile
-        this.carousel.addEventListener('touchstart', () => {
-            this.track.style.animationPlayState = 'paused';
-        });
+        // Make track horizontally scrollable with pointer dragging
+        this.track.addEventListener('pointerdown', (e) => this.onPointerDown(e), { passive: true });
+        window.addEventListener('pointermove', (e) => this.onPointerMove(e));
+        window.addEventListener('pointerup', (e) => this.onPointerUp(e));
 
-        this.carousel.addEventListener('touchend', () => {
-            this.track.style.animationPlayState = 'running';
-        });
+        // Pause auto-scroll on hover/focus
+        this.carousel.addEventListener('mouseenter', () => { this.paused = true; });
+        this.carousel.addEventListener('mouseleave', () => { this.paused = false; });
+
+        // Start the auto-scroll loop
+        requestAnimationFrame((t) => this.autoScroll(t));
     }
 
     cloneItems() {
-        const items = this.track.querySelectorAll('.review-item');
+        const items = Array.from(this.track.querySelectorAll('.review-item'));
         items.forEach(item => {
             const clone = item.cloneNode(true);
             this.track.appendChild(clone);
         });
+    }
+
+    onPointerDown(e) {
+        if (!this.track) return;
+        this.isPointerDown = true;
+        this.isDragging = false;
+        this.startX = e.clientX;
+        this.startScroll = this.track.scrollLeft;
+        this.track.setPointerCapture && this.track.setPointerCapture(e.pointerId);
+        // Pause auto scroll while user interacts
+        this.paused = true;
+        clearTimeout(this.resumeTimeout);
+    }
+
+    onPointerMove(e) {
+        if (!this.isPointerDown) return;
+        const dx = e.clientX - this.startX;
+        if (Math.abs(dx) > 5) this.isDragging = true;
+        this.track.scrollLeft = this.startScroll - dx;
+    }
+
+    onPointerUp(e) {
+        if (!this.isPointerDown) return;
+        this.isPointerDown = false;
+        try { this.track.releasePointerCapture && this.track.releasePointerCapture(e.pointerId); } catch (err) {}
+
+        if (this.isDragging) {
+            // Snap to nearest item center
+            this.snapToNearest();
+        }
+
+        // Resume auto-scroll after short delay
+        clearTimeout(this.resumeTimeout);
+        this.resumeTimeout = setTimeout(() => { this.paused = false; }, 1200);
+    }
+
+    snapToNearest() {
+        const items = Array.from(this.track.querySelectorAll('.review-item'));
+        if (!items.length) return;
+
+        const trackRect = this.track.getBoundingClientRect();
+        const center = this.track.scrollLeft + trackRect.width / 2;
+
+        // Find closest item by center position
+        let closest = items[0];
+        let closestDistance = Infinity;
+        items.forEach(item => {
+            const itemRect = item.getBoundingClientRect();
+            const itemCenter = item.offsetLeft + itemRect.width / 2;
+            const distance = Math.abs(itemCenter - center);
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closest = item;
+            }
+        });
+
+        const target = closest.offsetLeft - (trackRect.width - closest.getBoundingClientRect().width) / 2;
+        this.track.scrollTo({ left: target, behavior: 'smooth' });
+    }
+
+    autoScroll(timestamp) {
+        if (!this.lastTime) this.lastTime = timestamp;
+        const delta = timestamp - this.lastTime;
+
+        if (!this.paused && !this.isPointerDown) {
+            // Advance scroll
+            this.track.scrollLeft += this.autoSpeed * delta;
+
+            // Loop when reaching half (since we cloned items)
+            if (this.track.scrollLeft >= this.singleTrackWidth) {
+                this.track.scrollLeft -= this.singleTrackWidth;
+            }
+        }
+
+        this.lastTime = timestamp;
+        requestAnimationFrame((t) => this.autoScroll(t));
     }
 }
 
